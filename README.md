@@ -69,8 +69,8 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/yourusername/windsurf-tool.git
-cd windsurf-tool
+git clone https://github.com/crispvibe/Windsurf-Tool.git
+cd Windsurf-Tool
 
 # 2. 安装依赖
 npm install
