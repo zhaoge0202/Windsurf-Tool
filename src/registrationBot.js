@@ -588,17 +588,10 @@ class RegistrationBot {
       // 等待验证码输入框
       await page.waitForSelector('input[type="text"], input[name="code"]', { timeout: 15000 });
 
-      // 记录监控开始时间（在延迟之前）
-      const monitorStartTime = Date.now();
-      this.log(`🕐 记录监控开始时间: ${new Date(monitorStartTime).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}`);
-
-      // 延迟15秒后再获取验证码，避免批量注册时验证码混淆
-      this.log('⏱️  延迟 15 秒后获取验证码，避免混淆...');
-      await this.sleep(15000);
-
-      // 获取验证码（传入监控开始时间）
+      // 直接获取验证码（邮件通常在点击Continue后几秒内就到达）
+      // 使用10秒时间窗口策略，不需要延迟等待
       this.log('📬 正在接收验证码...');
-      const verificationCode = await this.getVerificationCode(email, 120000, monitorStartTime);
+      const verificationCode = await this.getVerificationCode(email, 120000);
       this.log(`✓ 获取到验证码: ${verificationCode}`);
       
       // 输入6位验证码
