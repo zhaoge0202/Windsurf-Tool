@@ -167,6 +167,8 @@ class EmailAPIHelper {
         console.log(`[EmailAPI] 收到 ${result.data.length} 封邮件`);
 
         // 过滤出监控开始时间之后的邮件
+        // 增加2秒容差，避免因时间精度问题漏掉邮件
+        const TIME_TOLERANCE = 2000; // 2秒容差
         const newEmails = result.data.filter(emailData => {
           if (!emailData.createTime) return false;
 
@@ -178,11 +180,14 @@ class EmailAPIHelper {
           // 调试日志
           const emailTimeLocal = new Date(emailTime).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'});
           const startTimeLocal = new Date(startTime).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'});
+          const adjustedStartTime = startTime - TIME_TOLERANCE;
           console.log(`[EmailAPI] 邮件时间: ${emailData.createTime} UTC → ${emailTimeLocal} (${emailTime})`);
           console.log(`[EmailAPI] 监控开始: ${startTimeLocal} (${startTime})`);
-          console.log(`[EmailAPI] 是否新邮件: ${emailTime > startTime}`);
+          console.log(`[EmailAPI] 容差调整后: ${new Date(adjustedStartTime).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})} (${adjustedStartTime})`);
+          console.log(`[EmailAPI] 是否新邮件: ${emailTime >= adjustedStartTime}`);
 
-          return emailTime > startTime;
+          // 使用 >= 并减去容差时间，确保不漏掉边界情况
+          return emailTime >= adjustedStartTime;
         });
 
         console.log(`[EmailAPI] 过滤后有 ${newEmails.length} 封新邮件`);
