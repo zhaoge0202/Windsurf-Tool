@@ -446,10 +446,80 @@ ipcMain.handle('full-auto-switch', async (event, account) => {
       });
     }
     
-    return { 
-      success: false, 
+    return {
+      success: false,
       error: error.message,
       details: error.stack
     };
+  }
+});
+
+// ==================== 邮箱API验证码接收器 ====================
+
+const EmailAPIHelper = require('./src/EmailAPIHelper');
+let emailAPIHelper = null;
+
+// 测试邮箱API连接
+ipcMain.handle('test-email-api-connection', async (event, config) => {
+  try {
+    const helper = new EmailAPIHelper(config);
+    const result = await helper.testConnection();
+    return result;
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+// 创建邮箱
+ipcMain.handle('create-email-api', async (event, config) => {
+  try {
+    emailAPIHelper = new EmailAPIHelper(config);
+    const emailInfo = await emailAPIHelper.createEmail();
+    return { success: true, data: emailInfo };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 启动验证码监控
+ipcMain.handle('start-monitoring-email-api', async (event, email, isConcurrent = false) => {
+  try {
+    if (!emailAPIHelper) {
+      throw new Error('EmailAPIHelper未初始化');
+    }
+    await emailAPIHelper.startMonitoring(email, isConcurrent);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 获取验证码
+ipcMain.handle('get-verification-code-email-api', async (event, email, maxWaitTime = 120000, customStartTime = null) => {
+  try {
+    if (!emailAPIHelper) {
+      throw new Error('EmailAPIHelper未初始化');
+    }
+    const code = await emailAPIHelper.getVerificationCode(email, maxWaitTime, customStartTime);
+    return { success: true, code };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 停止监控
+ipcMain.handle('stop-monitoring-email-api', async (event, email = null) => {
+  try {
+    if (!emailAPIHelper) {
+      throw new Error('EmailAPIHelper未初始化');
+    }
+    if (email) {
+      emailAPIHelper.stopMonitoringForEmail(email);
+    } else {
+      emailAPIHelper.stopAllMonitoring();
+    }
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
   }
 });

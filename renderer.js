@@ -221,24 +221,29 @@ function restoreUsedAccount(id) {
 
 async function startBatchRegister() {
   const count = parseInt(document.getElementById('registerCount').value);
-  
+
   if (!count || count < 1) {
     alert(t('invalidRegisterCount'));
     return;
   }
-  
-  if (!currentConfig.emailConfig) {
+
+  // 检查是否配置了IMAP或邮箱API
+  const hasIMAPConfig = currentConfig.emailConfig && currentConfig.emailConfig.host;
+  const hasAPIConfig = emailAPIConfig && emailAPIConfig.serverUrl;
+
+  if (!hasIMAPConfig && !hasAPIConfig) {
     alert(t('pleaseConfigureIMAP'));
     return;
   }
-  
+
   document.getElementById('registerProgress').style.display = 'block';
   document.getElementById('progressFill').style.width = '0%';
   document.getElementById('progressFill').textContent = '0%';
-  
+
   const result = await ipcRenderer.invoke('batch-register', {
     count,
-    ...currentConfig
+    ...currentConfig,
+    emailAPIConfig: hasAPIConfig ? emailAPIConfig : null
   });
   
   const successCount = result.filter(r => r.success).length;
@@ -1029,8 +1034,10 @@ window.addEventListener('DOMContentLoaded', () => {
   if (saved) {
     currentConfig = JSON.parse(saved);
   }
+  // 加载邮箱API配置
+  loadEmailAPIConfig();
   loadAccounts();
-  
+
   // 处理外部链接，在系统默认浏览器中打开
   const { shell } = require('electron');
   document.addEventListener('click', (e) => {
@@ -1064,3 +1071,137 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
+// ==================== 邮箱API验证码接收器相关函数 ====================
+
+// 邮箱API配置
+let emailAPIConfig = {
+  serverUrl: '',
+  adminEmail: '',
+  adminPassword: '',
+  emailDomain: ''
+};
+
+// 保存邮箱API配置
+async function saveEmailAPIConfig() {
+  emailAPIConfig = {
+    serverUrl: document.getElementById('emailAPIServerUrl')?.value || '',
+    adminEmail: document.getElementById('emailAPIAdminEmail')?.value || '',
+    adminPassword: document.getElementById('emailAPIAdminPassword')?.value || '',
+    emailDomain: document.getElementById('emailAPIDomain')?.value || ''
+  };
+
+  // 保存到本地存储
+  localStorage.setItem('emailAPIConfig', JSON.stringify(emailAPIConfig));
+
+  const statusEl = document.getElementById('emailAPIStatus');
+  if (statusEl) {
+    statusEl.innerHTML = `
+      <div class="status-message status-success">
+        邮箱API配置已保存！
+      </div>
+    `;
+    setTimeout(() => {
+      statusEl.innerHTML = '';
+    }, 3000);
+  }
+}
+
+// 加载邮箱API配置
+function loadEmailAPIConfig() {
+  const saved = localStorage.getItem('emailAPIConfig');
+  if (saved) {
+    emailAPIConfig = JSON.parse(saved);
+    if (document.getElementById('emailAPIServerUrl')) {
+      document.getElementById('emailAPIServerUrl').value = emailAPIConfig.serverUrl || '';
+      document.getElementById('emailAPIAdminEmail').value = emailAPIConfig.adminEmail || '';
+      document.getElementById('emailAPIAdminPassword').value = emailAPIConfig.adminPassword || '';
+      document.getElementById('emailAPIDomain').value = emailAPIConfig.emailDomain || '';
+    }
+  }
+}
+
+// 测试邮箱API连接
+async function testEmailAPIConnection() {
+  try {
+    const statusEl = document.getElementById('emailAPIStatus');
+    if (statusEl) {
+      statusEl.innerHTML = '<div class="status-message status-loading">正在测试连接...</div>';
+    }
+
+    const result = await ipcRenderer.invoke('test-email-api-connection', emailAPIConfig);
+
+    if (statusEl) {
+      if (result.success) {
+        statusEl.innerHTML = `
+          <div class="status-message status-success">
+            ✅ ${result.message}
+          </div>
+        `;
+      } else {
+        statusEl.innerHTML = `
+          <div class="status-message status-error">
+            ❌ ${result.message}
+          </div>
+        `;
+      }
+      setTimeout(() => {
+        statusEl.innerHTML = '';
+      }, 5000);
+    }
+  } catch (error) {
+    console.error('测试连接失败:', error);
+    const statusEl = document.getElementById('emailAPIStatus');
+    if (statusEl) {
+      statusEl.innerHTML = `
+        <div class="status-message status-error">
+          ❌ 测试失败: ${error.message}
+        </div>
+      `;
+    }
+  }
+}
+
+// 创建邮箱（使用API）
+async function createEmailViaAPI() {
+  try {
+    const result = await ipcRenderer.invoke('create-email-api', emailAPIConfig);
+    if (result.success) {
+      return result.data;
+    } else {
+      throw new Error(result.error);
+    }
+  } catch (error) {
+    console.error('创建邮箱失败:', error);
+    throw error;
+  }
+}
+
+// 获取验证码（使用API）
+async function getVerificationCodeViaAPI(email, maxWaitTime = 120000) {
+  try {
+    // 先启动监控
+    await ipcRenderer.invoke('start-monitoring-email-api', email, false);
+
+    // 然后获取验证码
+    const result = await ipcRenderer.invoke('get-verification-code-email-api', email, maxWaitTime);
+
+    if (result.success) {
+      return result.code;
+    } else {
+      throw new Error(result.error);
+    }
+  } catch (error) {
+    console.error('获取验证码失败:', error);
+    throw error;
+  }
+}
+
+// 停止监控（使用API）
+async function stopMonitoringViaAPI(email = null) {
+  try {
+    await ipcRenderer.invoke('stop-monitoring-email-api', email);
+  } catch (error) {
+    console.error('停止监控失败:', error);
+  }
+}

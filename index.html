@@ -1163,9 +1163,43 @@
       
       <button class="btn btn-primary" onclick="testImap()" data-i18n="testConnection">测试连接</button>
       <button class="btn btn-success" onclick="saveSettings()" data-i18n="saveConfig">保存配置</button>
-      
+
       <hr style="margin: 30px 0;">
-      
+
+      <h3>📧 邮箱API配置（第三方邮件服务）</h3>
+      <p style="font-size: 12px; color: #86868b; margin-bottom: 16px;">
+        使用第三方邮件API服务（如 tempmail 等）自动创建临时邮箱并接收验证码。
+        只需配置服务器地址、管理员邮箱、密码和邮箱域名即可。
+      </p>
+
+      <div class="form-group">
+        <label>API服务器地址</label>
+        <input type="text" id="emailAPIServerUrl" placeholder="https://your-email-api-server.com">
+      </div>
+
+      <div class="form-group">
+        <label>管理员邮箱</label>
+        <input type="email" id="emailAPIAdminEmail" placeholder="admin@example.com">
+      </div>
+
+      <div class="form-group">
+        <label>管理员密码</label>
+        <input type="password" id="emailAPIAdminPassword">
+      </div>
+
+      <div class="form-group">
+        <label>邮箱域名</label>
+        <input type="text" id="emailAPIDomain" placeholder="example.com">
+        <p style="font-size: 11px; color: #86868b; margin-top: 6px;">💡 提示：生成的邮箱格式为 randomname@example.com</p>
+      </div>
+
+      <button class="btn btn-primary" onclick="testEmailAPIConnection()" style="margin-right: 8px;">测试API连接</button>
+      <button class="btn btn-success" onclick="saveEmailAPIConfig()">保存API配置</button>
+
+      <div id="emailAPIStatus"></div>
+
+      <hr style="margin: 30px 0;">
+
       <h2 data-i18n="languageSettings">语言设置</h2>
       <div class="form-group">
         <label data-i18n="selectLanguage">选择语言</label>

@@ -41,31 +41,52 @@ class RegistrationBot {
   }
 
   /**
-   * 获取邮箱验证码（使用本地EmailReceiver）
+   * 获取邮箱验证码（支持IMAP和邮箱API两种方式）
    * 支持重试机制：最多重试3次，每次间隔30秒
+   * @param {string} email - 邮箱地址
+   * @param {number} maxWaitTime - 最大等待时间（毫秒）
+   * @param {number} customStartTime - 自定义监控开始时间（可选，用于处理延迟场景）
    */
-  async getVerificationCode(email, maxWaitTime = 120000) {
+  async getVerificationCode(email, maxWaitTime = 120000, customStartTime = null) {
     const emailConfig = this.config.emailConfig;
-    
-    if (!emailConfig) {
-      throw new Error('未配置邮箱IMAP信息');
+    const emailAPIConfig = this.config.emailAPIConfig;
+
+    // 检查是否配置了IMAP或邮箱API
+    const hasIMAPConfig = emailConfig && emailConfig.host;
+    const hasAPIConfig = emailAPIConfig && emailAPIConfig.serverUrl;
+
+    if (!hasIMAPConfig && !hasAPIConfig) {
+      throw new Error('未配置邮箱IMAP信息或邮箱API信息');
     }
-    
+
+    // 优先使用邮箱API，如果没有则使用IMAP
+    if (hasAPIConfig) {
+      return await this.getVerificationCodeViaAPI(email, maxWaitTime, customStartTime);
+    } else {
+      return await this.getVerificationCodeViaIMAP(email, maxWaitTime);
+    }
+  }
+
+  /**
+   * 通过IMAP获取验证码
+   */
+  async getVerificationCodeViaIMAP(email, maxWaitTime = 120000) {
+    const emailConfig = this.config.emailConfig;
     const EmailReceiver = require('./emailReceiver');
     const receiver = new EmailReceiver(emailConfig);
-    
+
     const MAX_RETRIES = 3;
     const RETRY_DELAY = 30000; // 30秒
-    
+
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         if (this.logCallback) {
-          this.logCallback(`📬 第 ${attempt} 次尝试获取验证码...`);
+          this.logCallback(`📬 第 ${attempt} 次尝试获取验证码 (IMAP)...`);
         }
         console.log(`[尝试 ${attempt}/${MAX_RETRIES}] 等待 ${email} 的验证码邮件...`);
-        
+
         const code = await receiver.getVerificationCode(email, maxWaitTime);
-        
+
         if (code) {
           if (this.logCallback) {
             this.logCallback(`✓ 成功获取验证码: ${code}`);
@@ -74,7 +95,7 @@ class RegistrationBot {
         }
       } catch (error) {
         console.error(`[尝试 ${attempt}/${MAX_RETRIES}] 获取验证码失败:`, error.message);
-        
+
         if (attempt < MAX_RETRIES) {
           if (this.logCallback) {
             this.logCallback(`⚠️ 第 ${attempt} 次获取失败，${RETRY_DELAY/1000} 秒后重试...`);
@@ -89,7 +110,56 @@ class RegistrationBot {
         }
       }
     }
-    
+
+    throw new Error('获取验证码失败，已达到最大重试次数');
+  }
+
+  /**
+   * 通过邮箱API获取验证码
+   * @param {string} email - 邮箱地址
+   * @param {number} maxWaitTime - 最大等待时间（毫秒）
+   * @param {number} customStartTime - 自定义监控开始时间（可选）
+   */
+  async getVerificationCodeViaAPI(email, maxWaitTime = 120000, customStartTime = null) {
+    const EmailAPIHelper = require('./EmailAPIHelper');
+    const helper = new EmailAPIHelper(this.config.emailAPIConfig);
+
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 30000; // 30秒
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (this.logCallback) {
+          this.logCallback(`📬 第 ${attempt} 次尝试获取验证码 (API)...`);
+        }
+        console.log(`[尝试 ${attempt}/${MAX_RETRIES}] 等待 ${email} 的验证码...`);
+
+        const code = await helper.getVerificationCode(email, maxWaitTime, customStartTime);
+
+        if (code) {
+          if (this.logCallback) {
+            this.logCallback(`✓ 成功获取验证码: ${code}`);
+          }
+          return code;
+        }
+      } catch (error) {
+        console.error(`[尝试 ${attempt}/${MAX_RETRIES}] 获取验证码失败:`, error.message);
+
+        if (attempt < MAX_RETRIES) {
+          if (this.logCallback) {
+            this.logCallback(`⚠️ 第 ${attempt} 次获取失败，${RETRY_DELAY/1000} 秒后重试...`);
+          }
+          console.log(`等待 ${RETRY_DELAY/1000} 秒后重试...`);
+          await this.sleep(RETRY_DELAY);
+        } else {
+          if (this.logCallback) {
+            this.logCallback(`❌ 已重试 ${MAX_RETRIES} 次，仍未获取到验证码`);
+          }
+          throw new Error(`获取验证码失败，已重试 ${MAX_RETRIES} 次: ${error.message}`);
+        }
+      }
+    }
+
     throw new Error('获取验证码失败，已达到最大重试次数');
   }
 
@@ -160,12 +230,28 @@ class RegistrationBot {
       }
       
       this.log('✓ 浏览器已启动');
-      
+
       // 生成临时邮箱和密码
-      const email = await this.generateTempEmail();
+      let email;
+      const emailAPIConfig = this.config.emailAPIConfig;
+      const hasAPIConfig = emailAPIConfig && emailAPIConfig.serverUrl;
+
+      if (hasAPIConfig) {
+        // 使用邮箱API创建邮箱
+        this.log('📧 正在通过API创建邮箱...');
+        const EmailAPIHelper = require('./EmailAPIHelper');
+        const helper = new EmailAPIHelper(emailAPIConfig);
+        const emailInfo = await helper.createEmail();
+        email = emailInfo.email;
+        this.log(`✓ 邮箱创建成功: ${email}`);
+      } else {
+        // 使用本地生成邮箱
+        email = await this.generateTempEmail();
+      }
+
       const password = email; // 密码和邮箱一样
       const { firstName, lastName } = this.generateRandomName();
-      
+
       this.log(`📧 邮箱: ${email}`);
       this.log(`👤 姓名: ${firstName} ${lastName}`);
       
@@ -388,17 +474,21 @@ class RegistrationBot {
       
       // ========== 第四步: 输入验证码 ==========
       this.log('📮 步骤4: 等待邮箱验证码...');
-      
+
       // 等待验证码输入框
       await page.waitForSelector('input[type="text"], input[name="code"]', { timeout: 15000 });
-      
+
+      // 记录监控开始时间（在延迟之前）
+      const monitorStartTime = Date.now();
+      this.log(`🕐 记录监控开始时间: ${new Date(monitorStartTime).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}`);
+
       // 延迟15秒后再获取验证码，避免批量注册时验证码混淆
       this.log('⏱️  延迟 15 秒后获取验证码，避免混淆...');
       await this.sleep(15000);
-      
-      // 获取验证码
+
+      // 获取验证码（传入监控开始时间）
       this.log('📬 正在接收验证码...');
-      const verificationCode = await this.getVerificationCode(email);
+      const verificationCode = await this.getVerificationCode(email, 120000, monitorStartTime);
       this.log(`✓ 获取到验证码: ${verificationCode}`);
       
       // 输入6位验证码
