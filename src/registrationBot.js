@@ -417,59 +417,169 @@ class RegistrationBot {
       
       // ========== 第三步: Cloudflare人机验证 ==========
       this.log('🛡️ 步骤3: 等待Cloudflare验证...');
-      
+
       // puppeteer-real-browser会自动处理Cloudflare Turnstile验证
-      // 等待验证完成
-      await this.sleep(10000);
-      
+      // 智能等待验证完成（检测验证状态 + Continue按钮可用性）
+      let verifySuccess = false;
+      const maxVerifyAttempts = 60; // 最多等待60次 * 1秒 = 60秒（支持多次重试）
+      let lastFrameState = null;
+      let frameDisappearCount = 0;
+
+      for (let i = 0; i < maxVerifyAttempts; i++) {
+        try {
+          // 检测Cloudflare验证框架是否存在
+          const cfChallenge = await page.$('iframe[src*="challenges.cloudflare.com"]');
+          const currentFrameState = cfChallenge ? 'present' : 'absent';
+
+          // 检测框架状态变化（可能是重新验证）
+          if (lastFrameState === 'present' && currentFrameState === 'absent') {
+            frameDisappearCount++;
+            this.log(`✓ Cloudflare验证框架已消失 (第${frameDisappearCount}次)`);
+          } else if (lastFrameState === 'absent' && currentFrameState === 'present') {
+            this.log('⚠️ 检测到验证框架重新出现，可能在重新验证...');
+          }
+
+          lastFrameState = currentFrameState;
+
+          // 如果框架已消失，检查Continue按钮是否可用
+          if (!cfChallenge) {
+            // 检查Continue按钮是否存在且可用
+            const continueButtonReady = await page.evaluate(() => {
+              const buttons = Array.from(document.querySelectorAll('button'));
+              const continueBtn = buttons.find(btn => {
+                const text = btn.textContent?.trim().toLowerCase() || '';
+                return text.includes('continue') || text.includes('next');
+              });
+
+              if (continueBtn) {
+                const rect = continueBtn.getBoundingClientRect();
+                const isVisible = rect.width > 0 && rect.height > 0;
+                const isEnabled = !continueBtn.disabled && continueBtn.getAttribute('disabled') === null;
+                return isVisible && isEnabled;
+              }
+              return false;
+            });
+
+            if (continueButtonReady) {
+              this.log('✓ Continue按钮已就绪，验证完成');
+              verifySuccess = true;
+              break;
+            } else {
+              this.log('⏳ 验证框架已消失，但Continue按钮未就绪，继续等待...');
+            }
+          }
+
+          // 检查是否有成功标识（Cloudflare验证成功后的特征）
+          const successIndicator = await page.evaluate(() => {
+            // 检查是否有成功的复选框标记
+            const checkbox = document.querySelector('input[type="checkbox"][aria-checked="true"]');
+            if (checkbox) return true;
+
+            // 检查Turnstile成功状态
+            const turnstile = document.querySelector('.cf-turnstile');
+            if (turnstile && turnstile.classList.contains('success')) return true;
+
+            return false;
+          });
+
+          if (successIndicator) {
+            this.log('✓ 检测到Cloudflare验证成功标识');
+            verifySuccess = true;
+            break;
+          }
+
+          // 每5秒打印一次进度
+          if (i % 5 === 0 && i > 0) {
+            this.log(`⏳ 等待Cloudflare验证... (${i + 1}/${maxVerifyAttempts})`);
+          }
+          await this.sleep(1000);
+
+        } catch (e) {
+          // 检测过程出错，继续等待
+          await this.sleep(1000);
+        }
+      }
+
+      if (verifySuccess) {
+        this.log('✓ Cloudflare验证完成');
+      } else {
+        this.log('⚠️ Cloudflare验证超时，尝试继续...');
+      }
+
+      // 额外等待2秒，确保页面状态稳定
+      await this.sleep(2000);
+
       // 点击Continue按钮（验证后）
       this.log('🔘 查找验证后的Continue按钮...');
       let clicked3 = false;
-      
-      // 尝试多次查找按钮
-      for (let attempt = 0; attempt < 3; attempt++) {
+
+      // 尝试多次查找按钮（增加到10次重试）
+      for (let attempt = 0; attempt < 10; attempt++) {
         try {
           // 方式1: 通过submit按钮
           const submitBtn = await page.$('button[type="submit"]');
           if (submitBtn) {
-            await submitBtn.click();
-            clicked3 = true;
-            this.log('✓ 验证后Continue按钮点击成功');
-            break;
+            const isClickable = await page.evaluate(btn => {
+              const rect = btn.getBoundingClientRect();
+              return rect.width > 0 && rect.height > 0 && !btn.disabled;
+            }, submitBtn);
+
+            if (isClickable) {
+              await submitBtn.click();
+              clicked3 = true;
+              this.log('✓ 验证后Continue按钮点击成功');
+              break;
+            }
           }
         } catch (e) {
-          // 忽略错误,继续尝试
+          // 忽略错误，继续尝试
         }
-        
+
         if (!clicked3) {
           try {
-            // 方式2: 通过文本查找
-            const buttons = await page.$$('button');
-            for (const btn of buttons) {
-              const text = await page.evaluate(el => el.textContent, btn);
-              if (text && (text.includes('Continue') || text.includes('继续') || text.includes('Next'))) {
-                await btn.click();
-                clicked3 = true;
-                this.log('✓ 通过文本找到Continue按钮');
-                break;
+            // 方式2: 查找所有可能的按钮元素（包括 button, a, div）
+            const allClickableElements = await page.$$('button, a[role="button"], div[role="button"], [type="submit"]');
+
+            for (const element of allClickableElements) {
+              const elementInfo = await page.evaluate(el => {
+                const rect = el.getBoundingClientRect();
+                const text = el.textContent?.trim() || el.innerText?.trim() || '';
+                return {
+                  text: text,
+                  visible: rect.width > 0 && rect.height > 0,
+                  disabled: el.disabled || el.getAttribute('disabled') !== null,
+                  className: el.className
+                };
+              }, element);
+
+              // 检查是否包含 Continue 文本
+              if (elementInfo.text) {
+                const textLower = elementInfo.text.toLowerCase();
+                if (textLower.includes('continue') || textLower.includes('next') || textLower.includes('继续')) {
+                  if (elementInfo.visible && !elementInfo.disabled) {
+                    await element.click();
+                    clicked3 = true;
+                    this.log('✓ Continue按钮点击成功');
+                    break;
+                  }
+                }
               }
             }
           } catch (e) {
-            // 忽略错误
+            // 忽略错误，继续尝试
           }
         }
-        
+
         if (clicked3) break;
-        
-        // 等待1秒后重试
-        this.log(`⚠️ 第${attempt + 1}次未找到按钮,等待后重试...`);
-        await this.sleep(2000);
+
+        // 等待后重试
+        await this.sleep(3000);
       }
-      
+
       if (!clicked3) {
         this.log('⚠️ 未找到Continue按钮,可能已自动跳转');
       }
-      
+
       await this.sleep(3000);
       
       // ========== 第四步: 输入验证码 ==========
